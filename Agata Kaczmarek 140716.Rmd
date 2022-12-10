@@ -1,0 +1,352 @@
+---
+title: "Stopniowe karłowacenie śledzi"
+author: "Agata Kaczmarek 140716"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: yes
+    keep_md: yes
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message = FALSE)
+```
+
+# Podsumowanie analizy
+
+W raporcie badano problem malejącej długości śledzia. Wczytano, opisano i oczyszczono dane. Dokonano analizy danych i koorelacji atrybutów. Zauważono, że największy wpływ przy koorelacji na długość śledzia ma temperatura przy powierzchni wody. Podczas wykorzystania regresorów dla regresji liniowej również ajwiększy wpływ maiała temperatura wody, a dla algorytmu Random Forrest natężenie połowów w regionie. Dla regresji liniowej przewidywana długość śledzia wynosi od 22.75cm 32.33cm, a dla Random Forrest od 20.82cm do 28.41cm. 
+
+# Wykorzystane biblioteki
+
+Do przygotowania raportu wykorzystano bilbioteki:
+
+
+- caret
+- data.table
+- dplyr
+- ggcorrplot
+- ggplot2
+- kableExtra
+- knitr
+- plotly
+- tidyr
+
+
+
+```{r  libraries, message=FALSE, warning=FALSE, include=FALSE}
+
+if(!require(caret)){install.packages("caret")}
+if(!require(data.table)){install.packages('data.table')}
+if(!require(dplyr)){install.packages('dplyr')}
+if(!require(ggcorrplot)){install.packages("ggcorrplot")}
+if(!require(ggplot2)){install.packages('ggplot2')}
+if(!require(kableExtra)){install.packages("kableExtra")}
+if(!require(knitr)){install.packages('knitr')}
+if(!require(plotly)){install.packages('plotly')}
+if(!require(tidyr)){install.packages('tidyr')}
+
+
+library(caret)
+library(data.table)
+library(dplyr)
+library(ggcorrplot)
+library(ggplot2)
+library(kableExtra)
+library(knitr)
+library(plotly)
+library(tidyr)
+
+
+
+```
+# Opis problemu 
+
+W Europie zauważono stopniowy spadek długości śledzia oceanicznego, dlatego zbadano warunki w jakich żyją oraz zmierzono ich długość. Obserwacje (50-100 trzyletnich śledzi), które odbywały się w połowach komercyjnych jednostek dotyczą ostatnich 60 lat. 
+
+# Wczytanie danych
+
+Wczytano plik podany na platformie eKursy oraz wyświetlono pierwsze oraz ostatnie wiersze.
+
+```{r read_data}
+
+read.csv(file='sledzie.csv')->herring_clear
+
+kable(head(herring_clear[,1:8]), format = "markdown", caption = "Herring - początek pobranego zbioru danych PART 1")
+kable(head(herring_clear[,9:16]), format = "markdown", caption = "Herring - początek pobranego zbioru danych PART 2")
+kable(tail(herring_clear[,1:8]), format = "markdown", caption = "Herring - koniec pobranego zbioru danych PART 1")
+kable(tail(herring_clear[,9:16]), format = "markdown", caption = "Herring - koniec pobranego zbioru danych PART 2")
+
+```
+
+
+# Przetwarzanie danych
+
+Sprawdzono, w których kolumnach pojawiają się wartości ?. Jeżeli taka wartość wystąpiła to była pobierana wartość z poprzedniego wiersza dla danej kolumny i przypisywana do sprawdzanego. W przypadku pustych wartości w pierwszym wierszu dane były pobierane z drugiego wiersza. Dodatkowo sprawdzono typy danych dla kolumn. Kolumny, które były typem `character` zamieniono na `numeric`. Dane są podane chronologicznie według zapisanych obserwacji. 
+
+
+```{r clear_data}
+herring_clear->herring
+herring[herring == '?'] <- NA
+
+
+herring<-fill(herring,cfin1,cfin2,chel1, chel2, lcop1, lcop2, sst, .direction ="updown")
+print(sapply(herring, class)) 
+
+herring[, 3:8] <- sapply(herring[, 3:8], as.numeric)
+herring[, 13] <- sapply(herring[, 13], as.numeric)
+print(sapply(herring, class)) 
+
+kable(head(herring[,1:8]), format = "markdown", digits = 2, caption = "Herring - początek sformatowanego zbioru danych PART 1")
+kable(head(herring[,9:16]), format = "markdown", digits = 2, caption = "Herring - początek sformatowanego zbioru danych PART 2")
+```
+
+
+# Rozmiar zbioru i statystyki
+
+Wszystkie wartości w zbiorze są numeric lub integer. Dotyczą one:
+
+- *length*: długość złowionego śledzia [cm];
+
+- cfin1: dostępnośś planktonu [zagęszczenie Calanus finmarchicus gat. 1];
+- cfin2: dostępność planktonu [zagęszczenie Calanus finmarchicus gat. 2];
+- chel1: dostępność planktonu [zagęszczenie Calanus helgolandicus gat. 1];
+- chel2: dostępność planktonu [zagęszczenie Calanus helgolandicus gat. 2];
+- lcop1: dostępność planktonu [zagęszczenie widłonogów gat. 1];
+- lcop2: dostępność planktonu [zagęszczenie widłonogów gat. 2];
+
+- fbar: natężenie połowów w regionie [ułamek pozostawionego narybku];
+- recr: roczny narybek [liczba śledzi];
+- cumf: łączne roczne natężenie połowów w regionie [ułamek pozostawionego narybku];
+- totaln: łączna liczba ryb złowionych w ramach połowu [liczba śledzi];
+
+- sst: temperatura przy powierzchni wody [°C];
+- sal: poziom zasolenia wody [Knudsen ppt];
+- xmonth: miesiąc połowu [numer miesiąca];
+- nao: oscylacja północnoatlantycka [mb].
+
+Zbiór danych zawiera `r nrow(herring)` wierszy i `r ncol(herring)` kolumn.
+Minimalna długość śledzia: `r min(herring$length)`.
+Maksymalna długość śledzia: `r max(herring$length)`.
+Występuje `r length(unique(herring$lenght))` różnych długości.
+
+
+Poniżej zostało przedstawione podsumowanie dotyczące wszystkich atrybutów.
+
+
+```{r summary_herring}
+kable(summary(herring)[,1:5])
+
+kable(summary(herring)[,6:11])
+```
+
+
+Z wcześniej wspomnianych założeń, że badania są podane chronologicznie można zobaczyć jak na początku rosła długość śledzia, a później częściej malała. Można to zauważyć przy 16640-tej obserwacji.
+
+```{r animation_lenght}
+
+p<-ggplot(herring, aes(x=X)) + 
+  geom_smooth(aes(y = length,colour="lenght"), color = "#4477AA") +
+  ggtitle("Animacja długości śledzia") +
+  xlab("Numer obserwacji") +
+  ylab("Długość śledzia [cm]")
+
+ggplotly(p)
+
+
+
+max_length <- layer_data(p)
+max_length <- max_length[(which.max(max_length$y)),1:2]
+
+
+head(max_length)
+
+
+```
+
+
+
+Poniżej przedstawione histogramy przedstawiają liczbę złowionych śledzi o danej długości z podziałem na miesiące. Można zauważyć, że najwięcej zebrano w sierpniu.  Ciekawym przypadkiem jest brak połowów Śledzi o długości ok. 24cm. 
+```{r hist_length}
+ggplot(herring, aes(x=length)) + 
+  geom_histogram(bins=30)+ facet_wrap(xmonth ~ .) + 
+  theme(panel.grid.major = element_line(colour = "blue")) +
+  scale_x_continuous(breaks = round(seq(min(herring$length), max(herring$length), by = 2),1)) +
+  ggtitle("Histogramy długości śledzia dla danego miesiąca") +
+  xlab("Długość śledzia [cm]") +
+  ylab("Liczba śledzi")
+```
+
+
+
+
+Poniższy wykres przedstawia linie trendu dostępności planktonów. Nawiększe zagęszczenie mają 2. gatunek widłogonów, a najmniejszy 1. gatunek **Calanus finmarchicus**.
+
+```{r plankton_geom_smooth, warning = FALSE, message=FALSE}
+ggplot(herring, aes(x=length)) + 
+  geom_smooth(aes(y = cfin1,colour="cfin1", color = "#4477AA")) + 
+  geom_smooth(aes(y = cfin2,colour="cfin2", color="#EE6677")) + 
+  geom_smooth(aes(y = chel1,colour="chel1", color="#228833")) +
+  geom_smooth(aes(y = chel2,colour="chel2", color="#CCBB44")) +
+  geom_smooth(aes(y = lcop1,colour="lcop1", color="#66CCEE")) +
+  geom_smooth(aes(y = lcop2,colour="lcop2", color="#AA3377")) +
+  scale_colour_manual(name="legend", values=c("#4477AA", "#EE6677","#228833","#CCBB44","#66CCEE","#AA3377")) +
+  ylab(bquote("Plankton availability")) + 
+  ggtitle("Linie trendu dostępności planktonów") +
+  xlab("Długość śledzia [cm]") +
+  ylab("Dostępnośc planktonu")
+  
+
+```
+
+
+Sprawdzono korelacje między zmiennymi. Nie sprawdzana była koorelacja numeru obserwacji z innymi atrybutami. Długość śledzia ma najsilniejszy współczynnik (-0.5) korelacji z temperaturą przy powierzchni wody (sst). Największy współczynnik korelacji (0.9) występuje dla zagęszczenia planktonów: **Calanus finmarchicus gat. 2** (chel2) i widłonogów gat. 2 (lcop2). Miesiące mają nasłabsze współczynniki korelacji z innymi atrybutami.   
+
+
+```{r correlation}
+data(herring)
+corr <- round(cor(herring[-1]),1)
+ggcorrplot(corr, lab=TRUE, title="") + 
+    ggtitle("Koorelacje między zmiennymi")
+```
+
+
+Na wykresie pokazującym jak zależy długość śledzia od temperatury przy powierzchni wody można zaobserwować, że długość śledzia gwałtownie spada przy temperaturze 14 `\u00b0` C
+
+
+```{r lenght_temp, message=FALSE}
+ggplot(herring) + 
+  geom_smooth(aes(x=sst, y=length)) + 
+  ggtitle("Trend długości śledzia zależny od temperatury") +
+  xlab("Temperatura \u00b0C") +
+  ylab("Długość śledzia [cm]")
+```
+
+Sprawdzono jak zależą od siebie atrybuty dla największego współczynnika koorelacji:
+
+```{r max_c}
+
+ggplot(herring) + 
+  geom_smooth(aes(x=lcop2, y=chel2)) + 
+  ggtitle("Trend zagęszczenia widłonogów gat. 2 zależny od \nzagęszczenia Calanus helgolandicus gat. 2")
+```
+
+Wysoki współczynnik koorelacji (0,7) mają atrybuty: natężenie połowów w regionie (fbar) i łączne roczne natężenie w regionie (cumf). Natomiast wysoki ujemny współczynnik (-0,7) koorelacji mają łączna liczba ryb złowiona w ramach połowu (totaln) i łączne roczne natężenie w regionie (cumf).
+
+```{r message=FALSE}
+ggplot(herring) + 
+  geom_smooth(aes(x=cumf, y=fbar))+facet_wrap(vars(xmonth)) +
+  ggtitle("Trend natężenia połowów w regionie") +
+  xlab("Roczne natężenie połowów") +
+  ylab("Natężenie połowów")
+
+ggplot(herring) + 
+  geom_smooth(aes(x=cumf, y=totaln))+facet_wrap(vars(xmonth)) +
+  ggtitle("Trend łącznej liczby złowionych ryb i natężenia połowu w regionie") +
+  xlab("Natężenie połowów w regionie") +
+  ylab("Łączna liczba złowionych ryb")
+
+```
+
+Brak wpływu na długość śledzia mają roczny narybek (recr) oraz łączne roczne natężenie połowów w regionie (cumf).
+
+```{r, warning=FALSE, message=FALSE}
+ggplot(herring) + 
+  geom_smooth(aes(x=length, y=recr))+facet_wrap(vars(xmonth)) +
+  ggtitle("Trend rocznego narybku i długości śledzia") +
+  xlab("Długość śledzia") +
+  ylab("Roczny narybek")
+ggplot(herring) +
+  geom_smooth(aes(x=length, y=cumf))+facet_wrap(vars(xmonth)) +
+  ggtitle("Trend łącznego rocznego natężenia połowów w regionie i długości") +
+  xlab("Łączne roczne natężenie połowów w regionie") +
+  ylab("Łączna liczba złowionych ryb")
+
+  
+```
+
+
+# Regresor przewidujący rozmiar śledzia
+
+## Przygotowanie danych
+
+Dokonano podziału zbioru danych na uczące, walidujące i testowe. Zbiór uczący to 75% całego zbioru. Usunięto atrybut X - numer obserwacji. Przygotowano schemat uczenia na podstawie powwtarzającej się oceny krzyżowej (repeatedcv) z 2 podziałami i 5 powtórzeniami. 
+
+```{r preprare_data, cache=TRUE}
+set.seed(23)
+inTraining <- 
+    createDataPartition(
+        y = herring$length,
+        p = .75,
+        list = FALSE)
+
+herringWithoutX<-select(herring, -X)
+
+training <- herringWithoutX[ inTraining,]
+testing  <- herringWithoutX[-inTraining,]
+
+ctrl <- trainControl(
+    method = "repeatedcv",
+    number = 2,
+    repeats = 5)
+
+```
+
+
+## Linear Regression
+
+Przygotowano uczenie przy pomocy regresji liniowej.
+
+```{r lr, cache=TRUE}
+
+fit_lr <- train(length ~ .,
+             data = training,
+             method = "lm",
+             trControl = ctrl,
+             ntree = 10)
+
+```
+
+Dla regresji liniowej miara $R^2$ wynosi 0.32, a $RMSE$ 1.36. Najbardziej istotną zmienną jest fbar - natężenie połowóW w regionie. Pokazano podsumowanie dotyczące predykcji dla regresji liniowej.
+
+```{r lr_plot}
+fit_lr
+varImp(fit_lr)
+ggplot(varImp(fit_lr))
+predictions_lr <- predict(fit_lr,herringWithoutX)
+print(summary(predictions_lr))
+
+```
+
+## Random Forrest
+
+Dla porównania wykorzystano również algorytmu Random Forrest.
+
+```{r rf, cache=TRUE}
+
+fit_rf <- train(length ~ .,
+             data = training,
+             method = "rf",
+             trControl = ctrl,
+             ntree = 10)
+
+```
+
+
+Dla Random Forrest miara $R^2$ waha się między 0.498 - 0.515, a $RMSE$ 1.148 - 1.170. Najbardziej istotną zmienną jest sst - temperatura przy powierzchni wody. Pokazano podsumowanie dotyczące predykcji dla algorytmy Random Forrest.
+
+
+```{r rf_plot}
+fit_rf
+varImp(fit_rf)
+ggplot(varImp(fit_rf))
+predictions_rf <- predict(fit_rf,herringWithoutX)
+print(summary(predictions_rf))
+
+```
+
+## Porównanie
+
+Miara $R^2$ jest większa dla regresji liniowej. Błąd średniokwadratowy jest mniejszy dla algorytmu Random Forrest. Najbardziej istotna zmienna dla Random Forrest sst -  temperatura przy powierzchni wody w regresji liniowej występuje z wysoką wartością na 3 miejscu. Natomiast fbar natężenie połowów w regionie z niską wartością dla Random Forrest występuje na 4 miejscu.
